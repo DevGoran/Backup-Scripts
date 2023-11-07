@@ -1,0 +1,42 @@
+# This script creates and then takes the DB and media files of the netbox docker container and dumbs them either on the network share (if mounted) or on an internal path.
+# Additionally, it checks if there are backups older than 7 days and removes them. /home/netbox/bin/netboxExportHistory.txt and /mnt/netbox_db_dumb/netboxExportHistory.txt contain events.
+ 
+# To-Do:
+# - Mount your desired network share at '/mnt/netbox_db_dumb'.
+# - Adjust script and storage paths to you desired locations.
+# - Change retention period if needed.
+# - Make sure to set a cron job according to your needs.
+# - Check if the script works incl. retention period. 
+
+#!/bin/bash
+# Set the backup timestamp.
+timestamp=$(date "+%Y-%m-%d_%H-%M-%S")
+
+# Check if network share is mounted. If it is, continue with dumping the database and media folder onto the network share incl. a timestamp.
+if grep -qs '/mnt/netbox_db_dumb ' /proc/mounts; then
+   # Enter docker-compose directory.
+   cd /home/netbox/projects/netbox-docker/
+
+   # Create db and media files backup and modify file names with timestamp and save them on the network share.
+   sudo docker compose exec -T postgres sh -c 'pg_dump -cU $POSTGRES_USER $POSTGRES_DB' | gzip > "/mnt/netbox_db_dumb/db_dump_${timestamp}.sql.gz"
+   sudo docker compose exec -T netbox tar c -jf - -C /opt/netbox/netbox/media ./ > "/mnt/netbox_db_dumb/media-backup_${timestamp}.tar.bz2"
+
+   # Delete backups older than 7 days and leave a log in the export history files.
+   find /mnt/netbox_db_dumb -type f -name "db_dump_*" -mtime +7 -exec rm {} \;
+   find /mnt/netbox_db_dumb -type f -name "media-backup_*" -mtime +7 -exec rm {} \;
+   echo "$(date "+%Y-%m-%d %H:%M:%S") | Successfully backed up DB on network share and removed backups older than 7 days" >> /home/netbox/bin/netboxExportHistory.txt
+   echo "$(date "+%Y-%m-%d %H:%M:%S") | Successfully backed up DB on network share and removed backups older than 7 days" >> /mnt/netbox_db_dumb/netboxExportHistory.txt
+
+else
+   # Enter docker-compose directory.
+   cd /home/netbox/projects/netbox-docker/
+
+   # Create db and media files backup and modify file names with timestamp and save them internally.
+   sudo docker compose exec -T postgres sh -c 'pg_dump -cU $POSTGRES_USER $POSTGRES_DB' | gzip > "/home/netbox/projects/netboxdb-backup/db_dump_${timestamp}.sql.gz"
+   sudo docker compose exec -T netbox tar c -jf - -C /opt/netbox/netbox/media ./ > "/home/netbox/projects/netboxdb-backup/media-backup_${timestamp}.tar.bz2"
+
+   # Delete backups older than 7 days and leave a log in the export history files.
+   find /home/netbox/projects/netboxdb-backup -type f -name "db_dump_*" -mtime +7 -exec rm {} \;
+   find /home/netbox/projects/netboxdb-backup -type f -name "media-backup_*" -mtime +7 -exec rm {} \;
+   echo "$(date "+%Y-%m-%d %H:%M:%S") | Network share not mounted. Netbox db dumb cannot be backed up at //path/to/networkshare/netbox/netbox_db_dumb.. Instead backed up to internal folder: /home/netbox/projects/netboxdb-backup. Removed backups older than 7 days"
+fi
